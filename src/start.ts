@@ -3,7 +3,7 @@
 import { defineCommand } from "citty"
 import clipboard from "clipboardy"
 import consola from "consola"
-import { serve, type ServerHandler } from "srvx"
+import { serve, type Server, type ServerHandler } from "srvx"
 import invariant from "tiny-invariant"
 
 import { mergeConfigWithDefaults } from "./lib/config"
@@ -32,7 +32,7 @@ interface RunServerOptions {
   proxyEnv: boolean
 }
 
-export async function runServer(options: RunServerOptions): Promise<void> {
+export async function startServer(options: RunServerOptions): Promise<Server> {
   // Ensure config is merged with defaults at startup
   mergeConfigWithDefaults()
 
@@ -125,15 +125,22 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     `🌐 Usage Viewer: ${serverUrl}/usage-viewer?endpoint=${serverUrl}/usage`,
   )
 
-  const { server } = await import("./server")
+  const { server: app } = await import("./server")
 
-  serve({
-    fetch: server.fetch as ServerHandler,
+  const runtimeServer = serve({
+    fetch: app.fetch as ServerHandler,
     port: options.port,
     bun: {
       idleTimeout: 0,
     },
   })
+
+  await runtimeServer.ready()
+  return runtimeServer
+}
+
+export async function runServer(options: RunServerOptions): Promise<void> {
+  await startServer(options)
 }
 
 export const start = defineCommand({
