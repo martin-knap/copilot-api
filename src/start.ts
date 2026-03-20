@@ -78,6 +78,11 @@ export async function startServer(options: RunServerOptions): Promise<Server> {
   const serverUrl = `http://localhost:${options.port}`
 
   if (options.claudeCode) {
+    consola.log(
+      "\n💡 Tip: The --claude-code flag simply generates a clipboard command for launching Claude Code. \n"
+        + "All models remain fully accessible without this flag, just configure the model ID directly in your settings.json file.",
+    )
+
     invariant(state.models, "Models should be loaded by now")
 
     const selectedModel = await consola.prompt(
