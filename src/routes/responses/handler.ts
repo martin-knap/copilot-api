@@ -29,6 +29,10 @@ export const handleResponses = async (c: Context) => {
   await checkRateLimit(state)
 
   const payload = await c.req.json<ResponsesPayload>()
+
+  // Remap model aliases to actual Copilot-supported model names
+  remapModelAlias(payload)
+
   logger.debug("Responses request payload:", JSON.stringify(payload))
 
   // not support subagent marker for now , set sessionId = getUUID(requestId)
@@ -48,8 +52,10 @@ export const handleResponses = async (c: Context) => {
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,
   )
+  // Allow unknown models through — let the Copilot API decide if they're supported.
+  // This handles aliases like "gpt-5" that aren't in our model list but work on the API.
   const supportsResponses =
-    selectedModel?.supported_endpoints?.includes(RESPONSES_ENDPOINT) ?? false
+    selectedModel?.supported_endpoints?.includes(RESPONSES_ENDPOINT) ?? true
 
   if (!supportsResponses) {
     return c.json(
@@ -164,6 +170,26 @@ const removeWebSearchTool = (payload: ResponsesPayload): void => {
   payload.tools = payload.tools.filter((t) => {
     return t.type !== "web_search"
   })
+}
+
+/**
+ * Remap model aliases to actual Copilot-supported model names.
+ * Graphiti and other tools may send generic names like "gpt-5" which
+ * need to be mapped to the actual Copilot model ID.
+ */
+const MODEL_ALIASES: Record<string, string> = {
+  "gpt-5": "gpt-5.4",
+  "gpt-5-mini": "gpt-5.4-mini",
+  "gpt-4.1-mini": "gpt-4.1",
+  "gpt-4.1-nano": "gpt-4.1",
+}
+
+const remapModelAlias = (payload: ResponsesPayload): void => {
+  const alias = MODEL_ALIASES[payload.model]
+  if (alias) {
+    logger.info(`Remapped model alias: ${payload.model} -> ${alias}`)
+    payload.model = alias
+  }
 }
 
 /**
