@@ -69,6 +69,11 @@ export const handleResponses = async (c: Context) => {
     selectedModel?.capabilities.limits.max_prompt_tokens,
   )
 
+  // Handle text_format (structured output) — convert JSON schema to instructions
+  // OpenAI SDK's responses.parse() sends text_format with JSON schema,
+  // but Copilot API doesn't support it natively
+  convertTextFormatToInstructions(payload)
+
   logger.debug("Translated Responses payload:", JSON.stringify(payload))
 
   const { vision, initiator } = getResponsesRequestOptions(payload)
@@ -159,4 +164,75 @@ const removeWebSearchTool = (payload: ResponsesPayload): void => {
   payload.tools = payload.tools.filter((t) => {
     return t.type !== "web_search"
   })
+}
+
+/**
+ * Convert text_format (structured output / JSON schema) to instructions.
+ *
+ * OpenAI SDK's `responses.parse()` sends a `text_format` field with a JSON schema
+ * so the model returns structured output. Copilot API does not support `text_format`,
+ * so we inject the schema into `instructions` and remove the unsupported field.
+ *
+ * Also handles `text.format` (nested variant used by some SDK versions).
+ */
+const convertTextFormatToInstructions = (payload: ResponsesPayload): void => {
+  // Handle top-level text_format (sent by responses.parse())
+  const textFormat = (payload as Record<string, unknown>).text_format as
+    | Record<string, unknown>
+    | undefined
+  if (textFormat) {
+    const schemaInstruction = buildSchemaInstruction(textFormat)
+    if (schemaInstruction) {
+      payload.instructions =
+        payload.instructions ?
+          `${payload.instructions}\n\n${schemaInstruction}`
+        : schemaInstruction
+      logger.debug(
+        "Converted text_format to instructions for structured output",
+      )
+    }
+    delete (payload as Record<string, unknown>).text_format
+  }
+
+  // Handle nested text.format
+  const textObj = (payload as Record<string, unknown>).text as
+    | { format?: Record<string, unknown> }
+    | undefined
+  if (textObj?.format && textObj.format.type !== "text") {
+    const schemaInstruction = buildSchemaInstruction(textObj.format)
+    if (schemaInstruction) {
+      payload.instructions =
+        payload.instructions ?
+          `${payload.instructions}\n\n${schemaInstruction}`
+        : schemaInstruction
+      logger.debug(
+        "Converted text.format to instructions for structured output",
+      )
+    }
+    // Reset to plain text
+    ;(payload as Record<string, unknown>).text = { format: { type: "text" } }
+  }
+
+  // Remove max_output_tokens if present (unsupported by some Copilot models)
+  if ((payload as Record<string, unknown>).max_output_tokens) {
+    delete (payload as Record<string, unknown>).max_output_tokens
+  }
+}
+
+const buildSchemaInstruction = (
+  format: Record<string, unknown>,
+): string | null => {
+  const formatName = typeof format.name === "string" ? format.name : ""
+  if (format.type === "json_schema" && format.schema) {
+    const label = formatName ? ` (${formatName})` : ""
+    return `You MUST respond with valid JSON matching this schema${label}:\n${JSON.stringify(format.schema, null, 2)}`
+  }
+  if (format.type === "json_object") {
+    return "You MUST respond with valid JSON."
+  }
+  // parse() sometimes sends {name, schema} without type
+  if (formatName && format.schema) {
+    return `You MUST respond with valid JSON matching this schema (${formatName}):\n${JSON.stringify(format.schema, null, 2)}`
+  }
+  return null
 }
